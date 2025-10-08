@@ -1,10 +1,9 @@
-name: Deploy FastAPI to Production
+name: Deploy to Production
 
 on:
   push:
     branches:
       - main
-      - master
 
 jobs:
   deploy:
@@ -13,17 +12,33 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
-      
-    - name: Deploy to server via SSH
-      uses: appleboy/ssh-action@master
-      with:
-        host: ${{ secrets.SERVER_HOST }}
-        username: ${{ secrets.SERVER_USER }}
-        key: ${{ secrets.SERVER_SSH_KEY }}
-        port: 22
-        script: |
-          cd /home/mouzzam/fastapi-app/fastapi-demo
-          git pull origin main
-          source /home/mouzzam/fastapi-app/venv/bin/activate
-          pip install -r requirements.txt
-          sudo systemctl restart fastapi
+
+    - name: Setup SSH
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        chmod 700 ~/.ssh
+        ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+    - name: Deploy using rsync
+      run: |
+        echo "Deploying to production server..."
+        rsync -avz --delete \
+          -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+          --exclude '.git' \
+          --exclude '.github' \
+          --exclude '__pycache__' \
+          --exclude '.env' \
+          --exclude 'venv' \
+          ./ ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.APP_PATH }}/
+
+    - name: Restart application
+      run: |
+        ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+          "cd ${{ secrets.APP_PATH }} && bash scripts/restart.sh"
+
+    - name: Cleanup
+      if: always()
+      run: rm -f ~/.ssh/deploy_key
